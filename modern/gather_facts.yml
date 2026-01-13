@@ -5,6 +5,9 @@
 
   tasks:
 
+ Become Ansible-env modern
+# cd /opt/ansible
+# ansible-playbook -i inventories/legacy/hosts.ini -i inventories/modern/hosts.ini playbooks/Ceva/modern/gather_facts.yml --limit all
     - name: Build CSV line for host
       set_fact:
         csv_line: "{{ inventory_hostname }},{{ ansible_facts.hostname }},{{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }},{{ ansible_facts.default_ipv4.address | default('N/A') }},{{ ansible_facts.processor_count | default('N/A') }},{{ ansible_facts.processor_cores | default('N/A') }},{{ ansible_facts.processor_threads_per_core | default('N/A') }},{{ ansible_facts.memory_mb.real.total | default('N/A') }},{{ 'VM' if ansible_facts.virtualization_role | default('host') == 'guest' else 'Physical' }},{{ ansible_facts.virtualization_type | default('None') }}"
