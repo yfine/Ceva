@@ -1,0 +1,4 @@
+/home           yp:auto_home
+/projects       yp:auto_projects
+/tools          yp:auto_tools
+/usr/local      yp:auto_local

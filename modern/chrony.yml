@@ -1,0 +1,29 @@
+---
+- name: Install and ensure Chrony is running (modern systems)
+  hosts: all
+  become: true
+
+  vars:
+    chrony_service: "{{ 'chronyd' if ansible_os_family == 'RedHat' else 'chrony' }}"
+
+  tasks:
+    - name: Install chrony
+      package:
+        name: chrony
+        state: present
+
+    - name: Ensure chrony service is enabled and running
+      service:
+        name: "{{ chrony_service }}"
+        enabled: true
+        state: started
+
+    - name: Check chrony sources
+      command: chronyc sources
+      register: chrony_sources
+      changed_when: false
+
+    - name: Show chrony sources
+      debug:
+        var: chrony_sources.stdout
+

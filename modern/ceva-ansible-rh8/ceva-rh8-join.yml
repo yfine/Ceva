@@ -1,0 +1,465 @@
+---
+- name: CEVA RHEL 8.10 Full System Provisioning (Python Bootstrap)
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars_prompt:
+    - name: ansible_ssh_pass
+      prompt: "Please enter the SSH password for user root"
+      private: yes
+
+  vars:
+    timezone: Asia/Jerusalem
+    domain_name: corp.local
+    rhsm_username: Ceva_Linux
+    rhsm_password: manager11
+
+  tasks:
+
+    - name: PAUSE – Press ENTER to continue
+      ansible.builtin.pause:
+        prompt: >
+          Before the script continues, ensure that the computer name
+          does NOT already exist in Active Directory.
+          Press ENTER to continue...
+
+
+
+    # ------------------------------------------------------------
+    # PYTHON + RHSM BOOTSTRAP
+    # ------------------------------------------------------------
+    - name: Register system to Red Hat
+      raw: >
+        subscription-manager register
+        --username {{ rhsm_username }}
+        --password {{ rhsm_password }}
+        --auto-attach
+        --force
+
+    - name: Install Python packages required by Ansible
+      raw: >
+        dnf install -y python3 python3-pip python3-setuptools python3-dnf python3-requests libselinux-python3
+
+    - name: Set Ansible Python interpreter (RHEL 8)
+      set_fact:
+        ansible_python_interpreter: /usr/libexec/platform-python
+
+    - name: Reset SSH connection to apply interpreter
+      meta: reset_connection
+
+    # ------------------------------------------------------------
+    # FACTS
+    # ------------------------------------------------------------
+    - name: Gather facts
+      setup:
+
+    # ------------------------------------------------------------
+    # DNS / HOSTS
+    # ------------------------------------------------------------
+    - name: Configure resolv.conf
+      ansible.builtin.copy:
+        src: resolv.conf
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Deploy /etc/hosts from template
+      ansible.builtin.template:
+        src: hosts.j2
+        dest: /etc/hosts
+        owner: root
+        group: root
+        mode: '0644'
+
+
+    # ------------------------------------------------------------
+    # NIS CONFIGURATION
+    # ------------------------------------------------------------
+    - name: Set NIS domain name (runtime)
+      ansible.builtin.command: domainname corp.local
+
+    - name: Deploy auto.master file for NFS/Autofs
+      ansible.builtin.copy:
+        src: auto.master
+        dest: /etc/auto.master
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Copy NIS configuration file
+      ansible.builtin.copy:
+        src: yp.conf
+        dest: /etc/yp.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+ 
+
+    # ------------------------------------------------------------
+    # SYSTEM SETTINGS
+    # ------------------------------------------------------------
+    - name: Disable SELinux permanently
+      ansible.builtin.selinux:
+        state: disabled
+
+    # ------------------------------------------------------------
+    # CERTIFICATES
+    # ------------------------------------------------------------
+    - name: Install CEVA root CA
+      ansible.builtin.copy:
+        src: CEVA-root-ca.cer
+        dest: /etc/pki/ca-trust/source/anchors/CEVA-root-ca.cer
+        mode: '0644'
+
+    - name: Update CA trust
+      ansible.builtin.command: update-ca-trust
+      changed_when: false
+
+    # ------------------------------------------------------------
+    # TIMEZONE
+    # ------------------------------------------------------------
+    - name: Set timezone
+      ansible.builtin.command: timedatectl set-timezone "{{ timezone }}"
+
+    # ------------------------------------------------------------
+    # LOCAL REPOS
+    # ------------------------------------------------------------
+    - name: Install CEVA local repo file
+      ansible.builtin.copy:
+        src: ceva-rhel.repo
+        dest: /etc/yum.repos.d/ceva-rhel.repo
+        mode: '0644'
+    - name: Copy EPEL RPM to managed node
+      ansible.builtin.copy:
+        src: epel-release-latest-8.noarch.rpm
+        dest: /tmp/epel-release-latest-8.noarch.rpm
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Install EPEL RPM
+      ansible.builtin.dnf:
+       name: /tmp/epel-release-latest-8.noarch.rpm
+       state: present
+       disable_gpg_check: yes
+
+
+    - name: Disable Red Hat default repos
+      ansible.builtin.command: subscription-manager repos --disable={{ item }}
+      loop:
+        - rhel-8-for-x86_64-baseos-rpms
+        - rhel-8-for-x86_64-appstream-rpms
+      changed_when: false
+
+    - name: Rebuild yum cache after adding CEVA local repo
+      ansible.builtin.command: dnf makecache
+      changed_when: false
+
+    # ------------------------------------------------------------
+    # INSTALL PACKAGES  FROM CEVA REPO
+    # ------------------------------------------------------------
+ 
+
+    - name: Clean yum cache
+      ansible.builtin.command: dnf clean all
+      changed_when: false
+
+       # ------------------------------------------------------------
+    # PACKAGE GROUPS (NON-FATAL)
+    # ------------------------------------------------------------
+    - name: Install package groups from CEVA repo
+      ansible.builtin.dnf:
+        name:
+          - "@backup-client"
+          - "@base"
+          - "@debugging"
+          - "@development"
+          - "@core"
+          - "@fonts"
+        state: present
+      ignore_errors: true
+
+    # ------------------------------------------------------------
+    # BASE PACKAGES (REQUIRED)
+    # ------------------------------------------------------------
+    - name: Install base packages from CEVA repo
+      ansible.builtin.dnf:
+        name:
+          - tcl
+          - bitmap-fixed-fonts
+          - bitmap-lucida-typewriter-fonts
+          - certmonger
+          - genisoimage
+          - krb5-workstation
+          - mtools
+          - oddjob
+          - openmotif
+          - spax
+          - perl-DBD-SQLite
+          - python3-dmidecode
+          - sg3_utils
+          - sgpio
+          - squashfs-tools
+          - wodim
+          - xterm
+          - ypbind
+          - autofs
+          - redhat-lsb
+          - redhat-lsb-core.i686
+          - redhat-lsb-cxx.i686
+          - nfs-utils
+          - motif.i686
+          - motif.x86_64
+          - ksh
+          - chrony
+          - nmap-ncat.x86_64
+          - net-snmp
+          - firefox
+          - samba
+          - samba-winbind
+          - samba-winbind-clients
+          - nscd
+          - tcsh
+          - java-1.8.0-openjdk
+          - java-1.8.0-openjdk-devel
+        state: present
+
+
+  
+    # ------------------------------------------------------------
+    # AUTH / DIRECTORY
+    # ------------------------------------------------------------
+    - name: Deploy Kerberos config
+      ansible.builtin.copy:
+        src: krb5.conf
+        dest: /etc/krb5.conf
+        mode: '0644'
+
+    - name: Deploy Samba config
+      ansible.builtin.copy:
+        src: smb.conf
+        dest: /etc/samba/smb.conf
+        mode: '0644'
+      notify: restart samba
+
+    - name: Deploy NSS config
+      ansible.builtin.copy:
+        src: nsswitch.conf
+        dest: /etc/nsswitch.conf
+        mode: '0644'
+
+    # ------------------------------------------------------------
+    # AUTHSELECT CONFIGURATION
+    # ------------------------------------------------------------
+    - name: Deploy custom password-auth file
+      ansible.builtin.copy:
+        src: password-auth
+        dest: /etc/authselect/password-auth
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Deploy custom system-auth file
+      ansible.builtin.copy:
+        src: system-auth
+        dest: /etc/authselect/system-auth
+        owner: root
+        group: root
+        mode: '0644'
+
+    # ------------------------------------------------------------
+    # CHRONY / NTP CONFIGURATION
+    # ------------------------------------------------------------
+    - name: Ensure /etc/chrony directory exists
+      ansible.builtin.file:
+        path: /etc/chrony
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Copy chrony.keys file
+      ansible.builtin.copy:
+        src: chrony.keys
+        dest: /etc/chrony/chrony.keys
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Copy chrony.conf file
+      ansible.builtin.copy:
+        src: chrony.conf
+        dest: /etc/chrony.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+
+    
+    # ------------------------------------------------------------
+    # SECURITY SCRIPTS
+    # ------------------------------------------------------------
+    - name: Deploy security scripts
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/root/{{ item }}"
+        mode: '0755'
+      loop:
+        - gytpol.sh
+        - ipv6-disableRH8.sh
+        - validity.sh
+
+    - name: Run security scripts once
+      ansible.builtin.command: "/root/{{ item }}"
+      args:
+        creates: "/root/.{{ item }}.done"
+      loop:
+        - gytpol.sh
+        - ipv6-disableRH8.sh
+        - validity.sh
+
+    - name: Mark scripts completed
+      ansible.builtin.file:
+        path: "/root/.{{ item }}.done"
+        state: touch
+      loop:
+        - gytpol.sh
+        - ipv6-disableRH8.sh
+
+    # ------------------------------------------------------------
+    # SERVICES
+    # ------------------------------------------------------------
+    # ------------------------------------------------------------
+    # MANUAL RESTART FOR YPBIND (OLD-SCHOOL)
+    # ------------------------------------------------------------
+
+    - name: Restart ypbind manually to fix bindresvport issue
+      ansible.builtin.command: systemctl restart ypbind.service
+
+    
+    - name: Enable required services
+      ansible.builtin.service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - chronyd
+        - autofs
+        - ypbind
+        - smb
+        - nmb
+
+    - name: Ensure winbind service is enabled and running
+      ansible.builtin.service:
+          name: winbind
+          state: stopped
+          enabled: true
+
+    - name: Disable firewalld
+      ansible.builtin.service:
+        name: firewalld
+        enabled: false
+        state: stopped
+    # copy libraries ###
+    - name: Install required shared libraries
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/usr/lib64/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - libgstreamer-1.0.so
+        - libgstreamer-1.0.so.0
+        - libgstreamer-1.0.so.0.1601.0
+        - libnsl-2.17.so
+        - libnsl.so
+        - libnsl.so.1
+        - libtcl8.5.so
+
+   # - name: Refresh shared library cache
+   #   ansible.builtin.command: ldconfig
+      
+    # ------------------------------------------------------------
+    # ROOT ENVIRONMENT VARIABLES
+    # ------------------------------------------------------------
+    - name: Set root default editor to vim
+      ansible.builtin.lineinfile:
+        path: /root/.bashrc
+        line: 'export VISUAL=vim'
+        state: present
+        create: yes
+
+    - name: Set root EDITOR environment variable
+      ansible.builtin.lineinfile:
+        path: /root/.bashrc
+        line: 'export EDITOR="$VISUAL"'
+        state: present
+        create: yes
+
+    #-------------------------------------------------------------
+    #Prepearation for RH8 BackEnd And Vlisi Install
+    #-------------------------------------------------------------
+
+    - name: Create /root/.install-info/
+      ansible.builtin.file:
+        path: /root/.install-info/
+        state: directory
+        owner: root
+        group: root
+        mode: '0600' 
+
+    - name: Copy install-pkg-be
+      ansible.builtin.copy:
+        src: install-pkg-be
+        dest: /root/.install-info/install-pkg-be
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Copy install-pkg-vlsi
+      ansible.builtin.copy:
+        src: install-pkg-vlsi
+        dest: /root/.install-info/install-pkg-vlsi
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Copy installed_packages-be.txt
+      ansible.builtin.copy:
+        src: installed_packages-be.txt
+        dest: /root/.install-info/installed_packages-be.txt
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Copy installed_packages-vlsi.txt
+      ansible.builtin.copy:
+        src: installed_packages-vlsi.txt
+        dest: /root/.install-info/installed_packages-vlsi.txt
+        owner: root
+        group: root
+        mode: '0600'
+
+
+    # ------------------------------------------------------------
+    # ROOT SSH
+    # ------------------------------------------------------------
+    - name: Ensure root SSH dir exists
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        mode: '0700'
+
+    - name: Install root authorized key
+      ansible.builtin.authorized_key:
+        user: root
+        key: "ssh-rsa AATyXzHhryi9l40So1UPTnfkDrSbPUKQooQPILPle+CxfIzlHw/f1RgIH8nMCTE99cJLccjLOizO3wLYdn/EtSJ4lGrkFn+jscJWrNCYFTTScrYHMDp3WApLbiDDJErujK1B4TYhODSzEcrbKJTDhY3m5vdu86OpZqN4ctyD/m2e55QGBn27e8zNrfZJ3m/g/NbmFs1QFT20vsxFpRYGLx3teV/r8Vq66HicAYwWmXfDgGMEFwWcMkMCI9krgoxv8bAtJgXSA8jJjQ== root@it-centos01"
+
+  handlers:
+    - name: restart samba
+      ansible.builtin.service:
+        name: smb
+        state: restarted

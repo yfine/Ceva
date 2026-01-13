@@ -1,0 +1,10 @@
+127.0.0.1   localhost localhost.localdomain
+192.168.64.96 it-ansible.corp.local it-ansible
+
+192.168.64.2         giant_nas.corp.local    giant_nas
+192.168.64.3         giant_nas.corp.local    giant_nas
+
+#BEGIN Nis Master/Slave Config
+192.168.64.49      nis-master.corp.local nis-master
+192.168.64.48      nis-slave.corp.local nis-slave
+#END Nis Master/Slave Config
