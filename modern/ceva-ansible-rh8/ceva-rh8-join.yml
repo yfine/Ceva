@@ -3,7 +3,8 @@
   hosts: all
   become: true
   gather_facts: false
-
+######
+# ansible-playbook -i inventories/modern/hosts.ini playbooks/Ceva/modern/ceva-ansible-rh8/ceva-rh8-join.yml --limit <new-host>
   vars_prompt:
     - name: ansible_ssh_pass
       prompt: "Please enter the SSH password for user root"
