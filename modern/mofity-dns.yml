@@ -1,0 +1,149 @@
+---
+- name: "Update DNS safely with dry-run check"
+  hosts: all
+  become: yes
+  vars:
+    dns_servers:
+      - 8.8.8.8
+      - 8.8.4.4
+    search_domain: example.com
+    dry_run: true  # set to false to apply changes
+
+  tasks:
+
+    # Step 1: Detect bonding
+    - name: "Check if bonding exists"
+      stat:
+        path: /proc/net/bonding
+      register: bonding_dir
+
+    - name: "Get bond interface name if bonding exists"
+      command: ls /proc/net/bonding
+      register: bond_names
+      when: bonding_dir.stat.exists
+
+    - name: "Set target interface fact"
+      set_fact:
+        target_iface: >-
+          {{
+            bond_names.stdout
+            if bonding_dir.stat.exists
+            else ansible_default_ipv4.interface
+          }}
+
+    # Step 2: Detect netplan (Ubuntu)
+    - name: "Detect netplan directory"
+      stat:
+        path: /etc/netplan
+      register: netplan_dir
+      when: ansible_facts.os_family == "Debian"
+
+    # Step 3: Gather current DNS for Ubuntu (resolv.conf)
+    - name: "Gather current DNS from /etc/resolv.conf"
+      when: ansible_facts.os_family == "Debian"
+      command: cat /etc/resolv.conf
+      register: current_dns
+      ignore_errors: yes
+
+    # Step 4: Determine if DNS change is needed
+    - name: "Determine if DNS update is needed"
+      set_fact:
+        dns_change_needed: "{{ current_dns.stdout is not search(dns_servers[0]) }}"
+      when: ansible_facts.os_family == "Debian"
+
+    # Step 5: Dry-run reporting
+    - name: "Dry-run: Show planned DNS change"
+      debug:
+        msg: >
+          Dry-run: DNS would be updated to {{ dns_servers }} on interface {{ target_iface }}
+      when: dry_run and dns_change_needed | default(true)
+
+    # Step 6: Apply DNS changes only if dry_run is false
+
+    # Ubuntu 16/18/20 - resolv.conf
+    - name: "Update /etc/resolv.conf on Ubuntu 16/18/20"
+      when:
+        - ansible_facts.os_family == "Debian"
+        - netplan_dir.stat.exists == false
+        - dry_run == false
+      copy:
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          search {{ search_domain }}
+          {% for dns in dns_servers %}
+          nameserver {{ dns }}
+          {% endfor %}
+
+    # Ubuntu 22/24 - Netplan YAML
+    - name: "Update Netplan YAML with DNS for Ubuntu 22/24"
+      when:
+        - ansible_facts.os_family == "Debian"
+        - netplan_dir.stat.exists
+        - dry_run == false
+      copy:
+        dest: /etc/netplan/99-ansible-dns.yaml
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          {% if bonding_dir.stat.exists %}
+          network:
+            version: 2
+            bonds:
+              {{ target_iface }}:
+                nameservers:
+                  addresses: [{{ dns_servers | join(', ') }}]
+                  search: [{{ search_domain }}]
+          {% else %}
+          network:
+            version: 2
+            ethernets:
+              {{ target_iface }}:
+                nameservers:
+                  addresses: [{{ dns_servers | join(', ') }}]
+                  search: [{{ search_domain }}]
+          {% endif %}
+      notify: "Apply netplan"
+
+    # RHEL 6/7 - ifcfg-* DNS
+    - name: "Update DNS in ifcfg file for RHEL 6/7"
+      when:
+        - ansible_facts.os_family == "RedHat"
+        - ansible_facts.distribution_major_version | int < 8
+        - dry_run == false
+      block:
+        - lineinfile:
+            path: "/etc/sysconfig/network-scripts/ifcfg-{{ target_iface }}"
+            regexp: '^DNS[0-9]='
+            line: "DNS1={{ dns_servers[0] }}"
+            create: yes
+        - lineinfile:
+            path: "/etc/sysconfig/network-scripts/ifcfg-{{ target_iface }}"
+            regexp: '^DNS[0-9]='
+            line: "DNS2={{ dns_servers[1] }}"
+            create: yes
+
+    # RHEL 8 - nmcli DNS
+    - name: "Update DNS for RHEL 8 via nmcli"
+      when:
+        - ansible_facts.os_family == "RedHat"
+        - ansible_facts.distribution_major_version | int >= 8
+        - dry_run == false
+      command: >
+        nmcli connection modify {{ target_iface }}
+        ipv4.dns "{{ dns_servers | join(' ') }}"
+        ipv4.ignore-auto-dns yes
+      notify: "Restart NetworkManager"
+
+  handlers:
+    - name: "Apply netplan"
+      command: netplan apply
+
+    - name: "Restart NetworkManager"
+      service:
+        name: NetworkManager
+        state: restarted
+

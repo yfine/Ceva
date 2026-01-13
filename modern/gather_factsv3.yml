@@ -1,0 +1,40 @@
+- hosts: redhat6
+  gather_facts: no
+  tasks:
+
+    - name: Get hostname
+      command: hostname
+      register: host_name
+
+    - name: Get distribution
+      command: cat /etc/redhat-release
+      register: distro
+
+    - name: Get default IPv4
+      command: ip -4 addr show scope global | grep inet | awk '{print $2}' | cut -d/ -f1
+      register: ip_addr
+
+    - name: Get CPU info
+      command: nproc
+      register: cpu_count
+
+    - name: Get memory
+      command: free -m | awk '/Mem:/ {print $2}'
+      register: mem_total
+
+    - name: Check if virtual
+      command: systemd-detect-virt || echo "physical"
+      register: virt_type
+      ignore_errors: yes
+
+    - name: Print collected info
+      debug:
+        msg: >-
+          {{ inventory_hostname }},
+          {{ host_name.stdout }},
+          {{ distro.stdout }},
+          {{ ip_addr.stdout | default('N/A') }},
+          {{ cpu_count.stdout }},
+          {{ mem_total.stdout }},
+          {{ 'VM' if virt_type.stdout != 'physical' else 'Physical' }}
+

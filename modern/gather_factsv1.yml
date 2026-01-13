@@ -1,0 +1,41 @@
+---
+- name: Gather facts and write to timestamped CSV file
+  hosts: all
+  gather_facts: yes
+
+  vars:
+    run_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d_%H%M%S') }}"
+    csv_file: "/tmp/all_hosts_facts_{{ run_timestamp }}.csv"
+    csv_header: "Inventory Host,Hostname,OS,IP,CPU Count,CPU Cores per CPU,Threads per Core,Memory(MB),Machine Type,Virtualization Type"
+
+  tasks:
+
+    - name: Create CSV file with header (once per run)
+      delegate_to: localhost
+      run_once: true
+      copy:
+        content: "{{ csv_header }}\n"
+        dest: "{{ csv_file }}"
+
+    - name: Build CSV line for host
+      set_fact:
+        csv_line: >-
+          {{ inventory_hostname }},
+          {{ ansible_facts.hostname }},
+          {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }},
+          {{ ansible_facts.default_ipv4.address | default('N/A') }},
+          {{ ansible_facts.processor_count }},
+          {{ ansible_facts.processor_cores }},
+          {{ ansible_facts.processor_threads_per_core }},
+          {{ ansible_facts.memory_mb.real.total }},
+          {{ 'VM' if ansible_facts.virtualization_role == 'guest' else 'Physical' }},
+          {{ ansible_facts.virtualization_type | default('None') }}
+
+    - name: Append host CSV line
+      delegate_to: localhost
+      lineinfile:
+        path: "{{ csv_file }}"
+        line: "{{ csv_line }}"
+        insertafter: EOF
+        create: yes
+
