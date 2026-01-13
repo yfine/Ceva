@@ -1,0 +1,3 @@
+{
+    "ansible.python.interpreterPath": "/opt/ansible/venvs/ansible-modern/bin/python"
+}
