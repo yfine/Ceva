@@ -1,10 +1,11 @@
+# Become Ansible-env modern
+# cd /opt/ansible
+# ansible-playbook -i inventories/legacy/hosts.ini -i inventories/modern/hosts.ini playbooks/Ceva/modern/gather_facts.yml --limit all
 ---
 - name: Gather facts and save to CSV
   hosts: all
   gather_facts: yes
-# Become Ansible-env modern
-# cd /opt/ansible
-# ansible-playbook -i inventories/legacy/hosts.ini -i inventories/modern/hosts.ini playbooks/Ceva/modern/gather_facts.yml --limit all
+
   tasks:
 
     - name: Build CSV line for host
